@@ -8,6 +8,7 @@ I'll divide this project into 4 main parts:
 	2. Music Trends
 	3. Profit Analysis
 	4. Employee Insights
+	5. Artist Information
 I hope you find this project engaging and insightful. 
 
 ======= Thank you for checking it out! :) =======
@@ -190,7 +191,8 @@ SELECT
 	PurchaseYear AS Year, 
 	LAG(TotalSales, 1) OVER(ORDER BY PurchaseYear ASC) AS PreviousYearSales,
 	TotalSales AS CurrentYearSales, 
-	ROUND((TotalSales - LAG(TotalSales, 1) OVER(ORDER BY PurchaseYear ASC)) * 100.0 / LAG(TotalSales, 1) OVER(ORDER BY PurchaseYear ASC), 2) || '%' AS PercentIncrease
+	ROUND((TotalSales - LAG(TotalSales, 1) OVER(ORDER BY PurchaseYear ASC)) * 100.0 / 
+		LAG(TotalSales, 1) OVER(ORDER BY PurchaseYear ASC), 2) || '%' AS PercentIncrease
 FROM NewTable;
 
 -- Comment: From 2007 to 2011 there was a decline in sales of the rock genre. The biggest decrease was from 2007 to 2008 around 12.78%
@@ -229,46 +231,103 @@ INNER JOIN Invoice AS i ON c.CustomerId = i.CustomerId
 INNER JOIN InvoiceLine AS il ON i.InvoiceId = il.InvoiceId
 INNER JOIN Track AS t ON il.TrackId = t.TrackId
 INNER JOIN Genre AS g ON t.GenreId = g.GenreId
-GROUP BY 1, 2, 3;
+GROUP BY 1, 2, 3
+ORDER BY 4 DESC;
 
--- Penjualan dalam 6 bulan terakhir
+-- Comment: Most of the genres with the most total spent are rock.
 
-SELECT * FROM Album
 
--- Calculate the total sales for each year.
+-- Question: Find the customer that has spent the most on music for each country.
 
-SELECT * FROM Album
+WITH RECURSIVE
+	tbl_customter_with_country AS (
+		SELECT 
+			c.CustomerId, 
+			c.FirstName || ' ' || c.LastName AS Name, 
+			i.BillingCountry AS Country, 
+			SUM(i.total) AS TotalSpent
+		FROM Customer AS c
+		INNER JOIN Invoice AS i ON c.CustomerId = i.CustomerId
+		GROUP BY 1, 2, 3
+		ORDER BY 2, 3 DESC
+		),
+	tbl_country_max_spending AS (
+		SELECT Country, MAX(TotalSpent) AS MaxSpent
+		FROM tbl_customter_with_country
+		GROUP BY 1)
 
--- Identify the employee with the most sales.
+SELECT tbl_cc.Country, tbl_cc.TotalSpent, tbl_cc.Name, tbl_cc.CustomerId
+FROM tbl_customter_with_country AS tbl_cc
+JOIN tbl_country_max_spending AS tbl_ms ON tbl_cc.Country = tbl_ms.Country
+WHERE tbl_cc.TotalSpent = tbl_ms.MaxSpent
+ORDER BY 1;
 
-SELECT * FROM Album
+-- Comment: -
 
--- Find the employee who has the most customers assigned to them.
 
-SELECT * FROM Album
+-- Question: How much was the total spent for the last 6 months (calculate from max date of InvoiceDate)?
 
--- Used to get the sale per unit per genre and percentage of sale
+-- Solution 1:
+WITH MaxDateValue AS (
+	SELECT MAX(InvoiceDate) AS MaxDate
+	FROM Invoice
+)
 
-SELECT * FROM Album
+SELECT 
+    STRFTIME('%Y-%m', i.InvoiceDate) AS YearMonth, 
+    SUM(i.Total) AS TotalSpent,
+    SUM(SUM(i.Total)) OVER(ORDER BY STRFTIME('%Y-%m', i.InvoiceDate)) AS CumulativeTotalSpent
+FROM Invoice AS i
+WHERE InvoiceDate BETWEEN (
+        SELECT STRFTIME('%Y-%m', DATE(MaxDate, '-5 months', '-1 day', 'start of month'))
+        FROM MaxDateValue
+    ) AND (SELECT STRFTIME('%Y-%m', DATE(MaxDate, '1 months')) FROM MaxDateValue)
+GROUP BY 1
+ORDER BY 1 ASC;
 
--- Used to get the aggregated table of countries with one customers grouped under ‘Other’ as country name, total number of customers, total number of orders, total value of orders, average value of orders. Countries grouped in others are excluded in the analysis because of its limited data.
+-- Solution 2 (with Google Big Query & DATE_TRUNC):
+WITH MaxDateValue AS (
+	SELECT MAX(InvoiceDate) AS MaxDate
+	FROM Invoice
+)
 
-SELECT * FROM Album
+SELECT 
+	EXTRACT(MONTH FROM i.InvoiceDate) AS Month, 
+	SUM(i.Total) AS TotalSpent,
+	SUM(SUM(i.Total)) OVER(ORDER BY STRFTIME('%Y-%m', i.InvoiceDate)) AS CumulativeTotalSpent
+FROM Invoice AS i
+WHERE InvoiceDate BETWEEN DATE_SUB(DATE_TRUNC((SELECT MaxDate FROM MaxDateValue), MONTH), INTERVAL 6 MONTH) AND (SELECT MaxDate FROM MaxDateValue)
+GROUP BY 1
+ORDER BY 1 ASC;
 
--- Used to get the percentage of sale per media type
+-- Comment: There was a slight increase in income over 6 months. Moreover, in month 11, there was a big increase.
 
-SELECT * FROM Album
 
--- Used to get all sales made by the sales agent
+-- Question: Create a table that explains the total spent for each quarter of the year (can be improvised with another column).
 
-SELECT * FROM Album
+SELECT
+	STRFTIME('%Y', i.InvoiceDate) AS Year,
+	CASE 
+		WHEN STRFTIME('%m', i.InvoiceDate) BETWEEN '01' AND '03' THEN 'Q1'
+        WHEN STRFTIME('%m', i.InvoiceDate) BETWEEN '04' AND '06' THEN 'Q2'
+        WHEN STRFTIME('%m', i.InvoiceDate) BETWEEN '07' AND '09' THEN 'Q3'
+        ELSE 'Q4'
+	END AS QuarterPeriod,
+	SUM(i.Total) AS TotalSpent,
+	SUM(SUM(i.Total)) OVER(ORDER BY STRFTIME('%Y-%m', i.InvoiceDate)) AS CumulativeTotalSpent,
+	ROUND((SUM(i.Total) - LAG(SUM(i.Total), 1) OVER(ORDER BY STRFTIME('%Y-%m', i.InvoiceDate))) * 100.0 / 
+		LAG(SUM(i.Total), 1) OVER(ORDER BY STRFTIME('%Y-%m', i.InvoiceDate)), 2) || '%' AS PercentIncrease
+FROM Invoice AS i
+GROUP BY 1, 2;
+
+-- Comment: -
 
 
 
 /* 4. Employee Insights */
 
 
--- Give a table that consist of EmployeeId, and
+-- Question: Create a table that shows the number of customers assigned to each employee from 2007 - 2011.
 
 WITH NewTable AS (
     SELECT
@@ -299,15 +358,23 @@ SELECT
     SUM(CASE WHEN Year = 2011 THEN 1 ELSE 0 END) AS "2011"
 FROM NewTable;
 
+-- Comment: The employee who has the most customers assigned to them is EmployeeId 3.
 
 
-/*
-https://stackoverflow.com/questions/1130062/execution-sequence-of-group-by-having-and-where-clause-in-sql-server
-https://github.com/ptyadana/Data-Analysis-for-Digital-Music-Store/blob/master/Chinook%20Digitial%20Music%20Store%20-%20Data%20Analysis.sql
-https://m-soro.github.io/Business-Analytics/SQL-for-Data-Analysis/L4-Project-Query-Music-Store/
-https://www.kaggle.com/code/alaasedeeq/chinook-sql 
- 
-DataViz
-https://github.com/arjunchndr/Analyzing-Chinook-Database-using-SQL-and-Python/blob/master/Analyzing%20Chinook%20Database%20using%20SQL%20and%20Python.ipynb
-https://rstudio-pubs-static.s3.amazonaws.com/636199_e04ca0dded894c23a17066dfad6ec9d3.html
-*/
+
+/* 5. Artist Information */
+
+
+-- Question: Find artists with track averages that are longer than the overall track average.
+
+SELECT 
+	a.ArtistId, 
+	AVG(t.Milliseconds) * 0.000016667 AS AverageTrackMinute -- 1 ms = 0.000016667 min		
+FROM Album AS a
+INNER JOIN Track AS t ON a.AlbumId = t.AlbumId
+GROUP BY a.ArtistId
+HAVING AVG(t.Milliseconds) > (SELECT 
+								AVG(Milliseconds) 
+							  FROM Track);
+
+-- Comment: Most track minutes average around 10 minutes or less, but there are also ones that reach up to 20 or even 40 minutes.
